@@ -11,7 +11,7 @@ var express = require('express');
 // cfenv provides access to your Cloud Foundry environment
 // for more info, see: https://www.npmjs.com/package/cfenv
 var cfenv = require('cfenv');
-
+var jwt = require('jwt-simple');
 // Use LDAP
 var ldap = require('ldapjs');
 
@@ -43,94 +43,196 @@ var sessions = {};
 var logon = function(sessionData) {
 	var sessionID = uuid.v1();
 	sessions[sessionID] = sessionData;
-
 	return sessionID;
 };
 
 
-// Process the login form for LDAP
-app.post("/login", function(req, res) {
 
-	// Data about this session. 
-	var sessionData = {
-		
-		// Information required to access the LDAP directory:
-		// URL, suffix, and admin (or read only) credentials.
-		// 
-		// In a normal application this would be in the 
-		// configuration parameters, but in this application we
-		// want people to be able to use their own LDAP server.
-		ldap: {
-			url: req.body.ldap_url,
-			dn: req.body.ldap_dn,
-			passwd: req.body.ldap_passwd,
-			suffix: req.body.ldap_suffix
-		},
-		
-		// Information related to the current user
-		uid: req.body.uid,
-		passwd: req.body.passwd,
-		dn: "",    // No DN yet
-		
-		// Authorizations we already calculated - none so far
-		authList: {}
-	};
-	
-	// Use the administrative account to find the user with that UID
-	var adminClient = ldap.createClient({
-		url: sessionData.ldap.url
-	});
-	
-	// Bind as the administrator (or a read-only user), to get the DN for
-	// the user attempting to authenticate
-	adminClient.bind(sessionData.ldap.dn, sessionData.ldap.passwd, function(err) {
 
-		// If there is an error, tell the user about it. Normally we would 
-		// log the incident, but in this application the user is really an LDAP
-		// administrator.
-		if (err != null)
-			res.send("Error at bind: " + err);
-		else
-			// Search for a user with the correct UID.
-			adminClient.search(req.body.ldap_suffix, {
-				scope: "sub",
-                filter: "(uid=" + sessionData.uid + ")"
-			}, function(err, ldapResult) {
+app.get("/new",function (req,res) {
 
-				if (err != null)
-					throw err;
-				else {
-					// If we get a result, then there is such a user.
-					ldapResult.on('searchEntry', function(entry) {
 
-						sessionData.dn = entry.dn;
-						sessionData.name = entry.object.cn;
+    //Example POST method invocation
+    // var http = require('http');
+	var request = require('request');
 
-						// When you have the DN, try to bind with it to check the password
-						var userClient = ldap.createClient({
-							url: sessionData.ldap.url
-						});
-						userClient.bind(sessionData.dn, sessionData.passwd, function(err) {
-							if (err == null) {
-								var sessionID = logon(sessionData);
+	var username = req.query.username;
+	var passsword = req.query.password;
+	var request_string = "http://localhost:3000/authenticate?username=" + username + "&password=" + passsword ;
+    console.log(request_string);
+	request(request_string, function (error, response, body) {
+        if (!error && response.statusCode == 200) {
+            console.log(body) // Print the google web page.
+            res.send(JSON.stringify(body));
+        }
+    })
 
-								res.setHeader("Set-Cookie", ["sessionID=" + sessionID]);
-								res.redirect("main.html");
-							} else
-								res.send("You are not " + sessionData.uid);
-						});
-					});
-					
-					// If we get to the end and there is no DN, it means there is no such user.
-					ldapResult.on("end", function() {
-					if (sessionData.dn === "")
-							res.send("No such user " + sessionData.uid); 
-					});
-				}
 
-			});
-	});
+
 });
+
+app.post("/adlogin",function (req,res) {
+    var request = require("request");
+
+    var options = { method: 'POST',
+        url: 'https://login.windows.net/pjadaptivealgogmail.onmicrosoft.com/oauth2/token',
+        headers:
+			{
+            // { 'postman-token': '6f4c8bc8-d2bd-1180-7163-e3032821148f',
+            //     'cache-control': 'no-cache',
+                'content-type': 'application/x-www-form-urlencoded' },
+        form:
+            { grant_type: 'password',
+                resource: 'https://qu-ldap-auth.herokuapp.com',
+                client_id: '9433e113-d25c-422a-86e3-26dc0d1b6700',
+                username: req.body.uid,
+                password: req.body.passwd,
+                scope: 'openid' } };
+
+    request(options, function (error, response, body) {
+        if (error) throw new Error(error);
+
+        // console.log(body);
+        res.json(body);
+    });
+
+
+
+});
+
+
+app.post("/apipost",function (req,res) {
+
+    app.set('jwtTokenSecret', "test_secret");
+    //Example POST method invocation
+    // var http = require('http');
+    var request = require('request');
+
+    var username = req.body.uid;
+    var passsword = req.body.passwd;
+    // var request_string = "http://localhost:3000/authenticate?username=" + username + "&password=" + passsword ;
+
+    // var formData = {
+    //     username: username ,
+    //     passsword: passsword
+    // };
+
+    request({
+            // headers: {'content-type' : 'application/json'},
+            url: 'http://localhost:3000/authenticate',
+			method: 'POST',
+            json: {username :username , password : passsword}
+        },
+        function (err, httpResponse, body) {
+            console.log("ERR",err);
+            console.log("Body", body.token);
+            var token = body.token;
+            if (token) {
+                try {
+                	console.log("token",token);
+                    console.log("JWT",app.get('jwtTokenSecret'));
+                    var decoded = jwt.decode(token, app.get('jwtTokenSecret'));
+
+						res.json({
+							user_name: decoded.user_name,
+							full_name: decoded.full_name,
+							mail: decoded.mail
+                        });
+				} catch (err) {
+                    res.status(500).send({ error: 'Access token could not be decoded'});
+                }
+            } else {
+                res.status(400).send({ error: 'Access token is missing'});
+            }
+        });
+
+
+});
+
+
+// Process the login form for LDAP
+// app.post("/login", function(req, res) {
+//
+// 	// Data about this session.
+// 	var sessionData = {
+//
+// 		// Information required to access the LDAP directory:
+// 		// URL, suffix, and admin (or read only) credentials.
+// 		//
+// 		// In a normal application this would be in the
+// 		// configuration parameters, but in this application we
+// 		// want people to be able to use their own LDAP server.
+// 		ldap: {
+// 			url: req.body.ldap_url,
+// 			dn: req.body.ldap_dn,
+// 			passwd: req.body.ldap_passwd,
+// 			suffix: req.body.ldap_suffix
+// 		},
+//
+// 		// Information related to the current user
+// 		uid: req.body.uid,
+// 		passwd: req.body.passwd,
+// 		dn: "",    // No DN yet
+//
+// 		// Authorizations we already calculated - none so far
+// 		authList: {}
+// 	};
+//
+// 	// Use the administrative account to find the user with that UID
+// 	var adminClient = ldap.createClient({
+// 		url: sessionData.ldap.url
+// 	});
+//
+// 	// Bind as the administrator (or a read-only user), to get the DN for
+// 	// the user attempting to authenticate
+// 	adminClient.bind(sessionData.ldap.dn, sessionData.ldap.passwd, function(err) {
+//
+// 		// If there is an error, tell the user about it. Normally we would
+// 		// log the incident, but in this application the user is really an LDAP
+// 		// administrator.
+// 		if (err != null)
+// 			res.send("Error at bind: " + err);
+// 		else
+// 			// Search for a user with the correct UID.
+// 			adminClient.search(req.body.ldap_suffix, {
+// 				scope: "sub",
+//                 filter: "(uid=" + sessionData.uid + ")"
+// 			}, function(err, ldapResult) {
+//
+// 				if (err != null)
+// 					throw err;
+// 				else {
+// 					// If we get a result, then there is such a user.
+// 					ldapResult.on('searchEntry', function(entry) {
+//
+// 						sessionData.dn = entry.dn;
+// 						sessionData.name = entry.object.cn;
+//
+// 						// When you have the DN, try to bind with it to check the password
+// 						var userClient = ldap.createClient({
+// 							url: sessionData.ldap.url
+// 						});
+// 						userClient.bind(sessionData.dn, sessionData.passwd, function(err) {
+// 							if (err == null) {
+// 								var sessionID = logon(sessionData);
+//
+// 								res.setHeader("Set-Cookie", ["sessionID=" + sessionID]);
+// 								res.redirect("main.html");
+// 							} else
+// 								res.send("You are not " + sessionData.uid);
+// 						});
+// 					});
+//
+// 					// If we get to the end and there is no DN, it means there is no such user.
+// 					ldapResult.on("end", function() {
+// 					if (sessionData.dn === "")
+// 							res.send("No such user " + sessionData.uid);
+// 					});
+// 				}
+//
+// 			});
+// 	});
+// });
 
 
 
