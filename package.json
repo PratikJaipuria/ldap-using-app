@@ -11,7 +11,12 @@
 		"body-parser": "*",
 		"cookie-parser": "*",
 		"ldapjs": "*",
-		"uuid": "*"
+		"uuid": "*",
+		"request": "*",
+		"jwt-simple": "*",
+		"moment": "2.13.0",
+		"cors": "2.7.1",
+		"promise": "^7.1.1"
 	},
 	"repository": {},
 	"engines": {
